@@ -16,7 +16,7 @@ def split_cols(lines, index):
             break
     return data
 
-with open("../testingtruss/tetr.txt", 'r') as file: # 2d or 3d input text file
+with open("../testingtruss/cube.txt", 'r') as file: # 2d or 3d input text file
 # with open("../hw2p1.txt", 'r') as file: # 2d or 3d input text file
     lines = file.readlines()
 
@@ -88,10 +88,9 @@ totndofs = ndpn * nodes # total dofs
 
 gcon = gconold.copy()
 for ndbcNum in range(ndbcs):#ndbcs):#3
-    for row in range(2*nodes): #8
+    for row in range(ndim*nodes): #8
         if gconold[row][0] == dbcnd[ndbcNum] and gconold[row][1] == dbcdof[ndbcNum]:
             rowIndex= row
-            break
     maxNum=gconold[rowIndex][2]
     for gIndex in range(len(gconold)):
         if gconold[gIndex][2] < maxNum:
@@ -100,6 +99,8 @@ for ndbcNum in range(ndbcs):#ndbcs):#3
             gcon[gIndex][2] = len(gconold)
         else:
             gcon[gIndex][2] = gconold[gIndex][2]-1
+        # if ndbcNum ==8:
+        #     print("GCON,8", gcon)
     gconold = gcon
     # print("gn", gcon)
     gcon = gconold.copy()
@@ -123,7 +124,19 @@ Kred = np.zeros((totndofs - ndbcs, totndofs - ndbcs))
 Fred = np.zeros(ndofs)
 
 for i in range(nfbcs):
-    dof = gcon[fnode[i]-1, fdof[i]-1]
+    print("fnode", fnode,i)
+    print("fdof",fdof)
+    r = np.argwhere(gcon[:,0] == fnode[i])
+    c = np.argwhere(gcon[:,1] == fdof[i])
+
+    
+    # print(set(r) & set(c))
+    for r1 in r:
+        if r1 in c:
+            row = r1
+            break
+    dof = gcon[row,2] -1 # select 3rd col
+    print(dof)
     Fred[dof] +=fval[i]
 
 uinit = np.zeros((nodes,ndpn))
@@ -145,7 +158,7 @@ for i in range(neles):  # Loop through elements
         for jd in range(2*ndpn):
         # Compute element stiffness matrix
             Kele[i][id,jd] += (ele[i][3] * ele[i][4] / LO[i]) * Bele[i][id]* Bele[i][jd]
-   
+    """
     for inode in range(2):
         for idof in range(ndpn):
             idoflocal = (inode)*ndpn+idof
@@ -159,12 +172,16 @@ for i in range(neles):  # Loop through elements
                             # if i == 0:
                                 # print(Kele[i][idoflocal,jdoflocal], i,idoflocal,jdoflocal, idofglobal, jdofglobal)
                             # print(i, idofglobal,jdofglobal,Kele[i][idoflocal,jdoflocal])
-                            Kred[idofglobal,jdofglobal]+=Kele[i][idoflocal,jdoflocal]
+                            # Kred[idofglobal,jdofglobal]+=Kele[i][idoflocal,jdoflocal]
+                            pass
                             # print(Kred)
                         else:
-                            Fred[idofglobal] -=Kele[i][idoflocal,jdoflocal] * uinit[ele[i][jnode+1]-1,jdof]
+                            # print("idof",idofglobal)
+                            pass
+                            # Fred[idofglobal] -=Kele[i][idoflocal,jdoflocal] * uinit[ele[i][jnode+1]-1,jdof]
     # if i>=1:
     #     break
+    """
 Kred = np.zeros((totndofs - ndbcs, totndofs - ndbcs))  
 row_idx, col_idx, values = [], [], []
 for i in range(neles):  # Loop through elements
@@ -179,10 +196,17 @@ for i in range(neles):  # Loop through elements
                 elif gcon[row][0] == node2 and gcon[row][1] == dim:
                     glist[ndim + dim - 1] = gcon[row][2] - 1
 
+    for row in range(2 * ndim):
+        if glist[row] < ndofs:  # Only for unknown DOFs
+            for col in range(2 * ndim):
+                if glist[col] >= ndofs:  # Only for known DOFs
+                    Fred[glist[row]] -= Kele[i][row, col] * dbcval[glist[col] - ndofs]
+    
+    
     ndofs = totndofs - ndbcs  # Active DOFs only
     glist = np.atleast_1d(glist) 
-    print(Kele[i])
-    print("GLIST",glist)
+    # print("KELE",Kele[i])
+    # print("GLIST",glist)
     # Store only nonzero values in sparse format
     for row in range(len(glist)):
         for col in range(len(glist)):
@@ -194,11 +218,15 @@ for i in range(neles):  # Loop through elements
             value = Kele[i][l1index, l2index]
       
             if glist[row] < ndofs and glist[col] < ndofs:# and abs(value) > 1e-8:  # Avoid storing explicit zeros
-                print("AA",l1index,l2index,value)
+                # print("AA",l1index,l2index,value)
                 Kred[glist[row],glist[col]] += value
-                print("Kred",Kred)
+                # print("Kred",Kred)
 # Kred = coo_matrix((values, (row_idx, col_idx)), shape=(ndofs, ndofs)).tocsr()
 print("K",Kred)  # Print dense matrix
+
+
+
+
 print(Fred)
 print(gcon)
 # Solve for unknown displacements

@@ -4,7 +4,7 @@
 import numpy as np
 
 # Change dataname to any linear or nonlinear input file! 
-dataname = "../testingtruss/tetr.txt" #  "nonLinear3DTetrahedron.txt"
+dataname = "../testingtruss/cube.txt" #  "nonLinear3DTetrahedron.txt"
 # dataname = "../hw2p1.txt"
 iterations = 1
 

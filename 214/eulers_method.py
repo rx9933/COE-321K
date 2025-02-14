@@ -4,7 +4,8 @@
 import numpy as np
 
 # Change dataname to any linear or nonlinear input file! 
-dataname = "hw1p1.txt" #  "nonLinear3DTetrahedron.txt"
+dataname = "../testingtruss/tetr.txt" #  "nonLinear3DTetrahedron.txt"
+# dataname = "../hw2p1.txt"
 iterations = 1
 
 def split_cols(lines, index):
@@ -124,7 +125,7 @@ def calculate(node, strain_constant):
 
     # Basis (B) matrix
     B = np.einsum("med, emn -> edn", angles, con) # nodelm(m), elements(e), ndims(d) x elements(e), nodelm (m), nodes (n)
-
+   
     # Stiffness (K) matrix
     K = np.einsum("edn, e, ebm->ndmb",B,strain_constant,B) # nodes (n or m), elements(e), axis/ndim (d or b)
     K = np.reshape(K, (ndim*nodes, ndim*nodes)) # per row, node1x node1y  node2x node2y
@@ -154,6 +155,10 @@ def calculate(node, strain_constant):
 
     # Fk = K1 Uu + K2 Uk 
     Uu = np.linalg.solve(K1, Fk-K2@Uk)
+    ########
+    print("K", K)
+    print("K1", K1)
+    print(Fk-K2@Uk)
 
     # Fu = K3 Uu + K4 Uk
     Fu = K3@Uu+K4@Uk

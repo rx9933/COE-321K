@@ -1,5 +1,5 @@
 # 10/31
-
+## all 1 input
 import numpy as np
 from math import sqrt
 from scipy.sparse import coo_matrix
@@ -16,7 +16,8 @@ def split_cols(lines, index):
             break
     return data
 
-with open('hw2p1.txt', 'r') as file: # 2d or 3d input text file
+with open("../testingtruss/tetr.txt", 'r') as file: # 2d or 3d input text file
+# with open("../hw2p1.txt", 'r') as file: # 2d or 3d input text file
     lines = file.readlines()
 
 lineno = 0
@@ -98,9 +99,12 @@ for ndbcNum in range(ndbcs):#ndbcs):#3
         elif gconold[gIndex][2] == maxNum:
             gcon[gIndex][2] = len(gconold)
         else:
-            gcon[gIndex][2] = gconold[gIndex - 1][2]
+            gcon[gIndex][2] = gconold[gIndex][2]-1
     gconold = gcon
+    # print("gn", gcon)
     gcon = gconold.copy()
+
+
 
 
 #######################################################################
@@ -112,84 +116,92 @@ dircos = np.zeros((neles, ndim))
 Bele = np.zeros((neles, 2*ndim))
 Kele = np.zeros((neles, 2*ndim, 2*ndim))
 
+ndofs = totndofs - ndbcs  # Active DOFs only
 
+# Initialize global stiffness matrix (assuming it's not too large)
+Kred = np.zeros((totndofs - ndbcs, totndofs - ndbcs))  
+Fred = np.zeros(ndofs)
 
-row_idx, col_idx, values = [], [], []
+for i in range(nfbcs):
+    dof = gcon[fnode[i]-1, fdof[i]-1]
+    Fred[dof] +=fval[i]
+
+uinit = np.zeros((nodes,ndpn))
+for i in range(ndbcs):
+    uinit[dbcnd[i]-1, dbcdof[i]-1] = dbcval[i]
 
 for i in range(neles):  # Loop through elements
     lsquared = sum((node[ele[i][2]-1][j+1] - node[ele[i][1]-1][j+1])**2 for j in range(ndim))
-    LO.append(sqrt(lsquared)) 
+    LO.append(np.sqrt(lsquared)) 
     
-    for j in range(ndim):  # Compute direction cosines
+    # Compute direction cosines
+    for j in range(ndim):
         diff = node[ele[i][2]-1][j+1] - node[ele[i][1]-1][j+1]
         dircos[i][j] = diff / LO[i]
         Bele[i][j] = -dircos[i][j]
         Bele[i][j+ndim] = -Bele[i][j]
+ 
+    for id in range(2*ndpn):
+        for jd in range(2*ndpn):
+        # Compute element stiffness matrix
+            Kele[i][id,jd] += (ele[i][3] * ele[i][4] / LO[i]) * Bele[i][id]* Bele[i][jd]
+   
+    for inode in range(2):
+        for idof in range(ndpn):
+            idoflocal = (inode)*ndpn+idof
+            idofglobal = gcon[ele[i][inode],idof]-1
+            if idofglobal<=ndofs:
+                for jnode in range(2):
+                    for jdof in range(ndpn):
+                        jdoflocal = (jnode)*ndpn+jdof
+                        jdofglobal=gcon[ele[i][jnode],jdof]-1
+                        if jdofglobal<ndofs:
+                            # if i == 0:
+                                # print(Kele[i][idoflocal,jdoflocal], i,idoflocal,jdoflocal, idofglobal, jdofglobal)
+                            print(i, idofglobal,jdofglobal,Kele[i][idoflocal,jdoflocal])
+                            Kred[idofglobal,jdofglobal]+=Kele[i][idoflocal,jdoflocal]
+                            print(Kred)
+                        else:
+                            Fred[idofglobal] -=Kele[i][idoflocal,jdoflocal] * uinit[ele[i][jnode+1]-1,jdof]
+    # if i>=1:
+    #     break
 
-    Kele[i] = (ele[i][3] * ele[i][4] / LO[i]) * np.outer(Bele[i], Bele[i])  # EA/L * Bele^T * Bele
-
-    node1, node2 = ele[i][1], ele[i][2]
-    glist = [0] * (2 * ndim)  # Stores global DOF indices for this element
-
-    for row in range(ndim * nodes):
-        if gcon[row][0] in {node1, node2}:
-            for dim in range(1, ndim + 1):
-                if gcon[row][0] == node1 and gcon[row][1] == dim:
-                    glist[dim - 1] = gcon[row][2] - 1
-                elif gcon[row][0] == node2 and gcon[row][1] == dim:
-                    glist[ndim + dim - 1] = gcon[row][2] - 1
-
-    ndofs = totndofs - ndbcs  # Active DOFs only
-
-    # Store only nonzero values in sparse format
-    for row in range(len(glist)):
-        for col in range(len(glist)):
-            value = Kele[i][row, col]
-            if glist[row] < ndofs and glist[col] < ndofs and abs(value) > 1e-12:  # Avoid storing explicit zeros
-                row_idx.append(glist[row])
-                col_idx.append(glist[col])
-                values.append(value)
-
-# Create sparse matrix in COO format and convert to CSR
-Kred = coo_matrix((values, (row_idx, col_idx)), shape=(ndofs, ndofs)).tocsr()
-
-###
-# Set up force array
-Fred = np.zeros(ndofs)
-
-# Compute force contributions from elements
-for i in range(neles):
-    node1, node2 = ele[i][1], ele[i][2]
-    glist = [0] * (2 * ndim)  # Store global DOF indices
-
-    for row in range(ndim * nodes):
-        if gcon[row][0] in {node1, node2}:
-            for dim in range(1, ndim + 1):
-                if gcon[row][0] == node1 and gcon[row][1] == dim:
-                    glist[dim - 1] = gcon[row][2] - 1
-                elif gcon[row][0] == node2 and gcon[row][1] == dim:
-                    glist[ndim + dim - 1] = gcon[row][2] - 1
-
-    # Subtract known displacement contributions
-    for row in range(2 * ndim):
-        if glist[row] < ndofs:  # Only for unknown DOFs
-            for col in range(2 * ndim):
-                if glist[col] >= ndofs:  # Only for known DOFs
-                    Fred[glist[row]] -= Kele[i][row, col] * dbcval[glist[col] - ndofs]
-
-# Apply forces to the reduced force vector
-for i in range(nfbcs):
-    for row in range(ndim * nodes):
-        if gcon[row][0] == fnode[i] and gcon[row][1] == fdof[i]:
-            gdofi = gcon[row][2] - 1  # Map to zero-based index for reduced DOF
-            if gdofi < ndofs:  # Apply force only to active DOFs
-                Fred[gdofi] += fval[i]  # Apply the force value at the correct index
-
+# print(Kele)
+print(Kred)  # Print dense matrix
+print(Fred)
+print(gcon)
 # Solve for unknown displacements
-u_red = spsolve(Kred.tocsr(), Fred)
+u_red = spsolve(Kred, Fred)
 
 # Append prescribed displacements
 u = np.concatenate([u_red, dbcval])
 
-print(u)
+# convert u to regular (non gdof) list
+u_flat = [0]*ndim*nodes
+for i in range(ndim*nodes):
+    uflatindex =gcon[i,2]-1
+    u_flat[i] = u[uflatindex]
 
+# Calculate internal forces Nbar using Bele and local displacements (u_local)
+Nbar = np.zeros(neles)  
+
+for i in range(neles):
+    node1, node2 = ele[i][1], ele[i][2]
+    u_local = np.zeros(2 * ndim) 
+    for j in range(ndim): 
+        u_local[j] = u_flat[ndpn * (node1 - 1) + j]  
+        u_local[ndim + j] = u_flat[ndpn * (node2 - 1) + j]  
+    Nbar[i] = (ele[i][3] * ele[i][4] / LO[i]) * np.dot(Bele[i], u_local)  # EA/L * Bele^T * u_local
+
+ele = np.array(ele)
+Fext = np.zeros((nodes, ndpn))
+for iele in range(neles):
+    for localnode in range(2):
+        for localdof in range(ndpn):
+            globalnode=int(ele[iele, localnode+1])
+            Fext[globalnode-1, localdof] += Nbar[iele] * Bele[iele, ndpn*(localnode)+localdof]
+
+
+print("U",u_flat)
+print("N", Nbar)
+print("Fext", Fext)

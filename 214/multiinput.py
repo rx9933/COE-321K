@@ -4,84 +4,67 @@ import numpy as np
 from math import sqrt
 from scipy.sparse import coo_matrix
 from scipy.sparse.linalg import spsolve
+import os
 
-def split_cols(lines, index):
-    data = []
-    while index < len(lines):
-        if lines[index].strip():
-            columns = lines[index].split()
-            data.append(columns)
-            index += 1
-        else:
-            break
-    return data
+
+
+
+### PRE PROCESSING ###
+
+
 loc = "../testingtruss/3dtestcase/"
-with open(loc+"1.txt", 'r') as file: # 2d or 3d input text file
-# with open("../hw2p1.txt", 'r') as file: # 2d or 3d input text file
-    lines = file.readlines()
+filenames = [loc+"nodes", loc+"forces", loc+"displacements", loc+"elements"]
+for filename in filenames:
 
-lineno = 0
+    # Check if the file exists without an extension
+    if os.path.exists(filename) and not os.path.exists(filename + ".txt"):
+        os.rename(filename, filename + ".txt")
+        print(f'Renamed "{filename}" to "nodes.txt"')
+    else:
+        print(f'"{filename}" does not exist or "nodes.txt" already exists.')
 
-for line in lines:
-    if "Number of spatial dimensions:" in line:
-        ndim = int(lines[lineno + 1])
-        ndpn = ndim
-    elif "Number of joints/nodes:" in line:
-        nodes = int(lines[lineno + 1])
-    elif "Node #, x-location, y-location, (z-location if 3D)" in line:
-        node = []
-        index = lineno + 1
-        data = split_cols(lines, index)
-        for columns in data:
-            nodeno = int(columns[0])
-            if ndim == 2:
-                x, y = float(columns[1]), float(columns[2])
-                node.append([nodeno, x, y])
-            else:
-                x, y, z = float(columns[1]), float(columns[2]), float(columns[3])
-                node.append([nodeno, x, y, z])
-    elif "Number of bars/elements:" in line:
-        neles = int(lines[lineno + 1])
-    elif "Element#" in line:
-        ele = []
-        index = lineno + 1
-        data = split_cols(lines, index)
-        for columns in data:
-            element_number = int(columns[0])
-            local_node1 = int(columns[1])
-            local_node2 = int(columns[2])
-            youngs_modulus = float(columns[3])
-            area = float(columns[4])
-            ele.append([element_number, local_node1, local_node2, youngs_modulus, area])
-    elif "Number of applied forces" in line:
-        nfbcs = int(lines[lineno + 1])
-    elif "Node#, Force direction, Force value" in line:
-        fnode = []
-        fdof = []
-        fval = []
-        force = []
-        index = lineno + 1
-        data = split_cols(lines, index)
-        for columns in data:
-            fnode.append(int(columns[0]))
-            fdof.append(int(columns[1]))
-            fval.append(float(columns[2]))
-            force.append([int(columns[0]), int(columns[1]), float(columns[2])]) # array of forces info
-    elif "Number of known/applied displacements" in line:
-        ndbcs = int(lines[lineno + 1])
-    elif "Node#, Displacement direction, Displacement value" in line:
-        index = lineno + 1
-        data = split_cols(lines, index)
-        dbcnd=[]
-        dbcdof=[]
-        dbcval=[]
-        dbc=[] # array of displacment info
-        for columns in data:
-            dbcnd.append(int(columns[0]))
-            dbcdof.append(int(columns[1]))
-            dbcval.append(float(columns[2]))
-            dbc.append([int(columns[0]), int(columns[1]), float(columns[2])])
-    lineno += 1
+
+filenames = [loc+"nodes.txt", loc+"forces.txt", loc+"displacements.txt", loc+"elements.txt"]
+
+# Function to read non-empty lines from a file
+def read_non_empty_lines(filename):
+    with open(filename, 'r') as f:
+        return [line.strip() for line in f if line.strip()]
+
+# Read nodes
+node_data = read_non_empty_lines(filenames[0]) # nodes
+ndim = int(node_data[0])
+node = [list(map(float, line.split())) for line in node_data[1:]]
+nodes = int(node[0][0])
+node = node[1:]
+
+# Read forces
+force_data = read_non_empty_lines(filenames[1]) # forces
+nfbcs = int(force_data[0])
+force_values = [list(map(float, line.split())) for line in force_data[1:]]
+fnode = [int(row[0]) for row in force_values]
+fdof = [int(row[1]) for row in force_values]
+fval = [row[2] for row in force_values]
+print("dbcval",fval)
+# Read displacements
+displacement_data = read_non_empty_lines(filenames[2]) # displacements
+ndbcs = int(displacement_data[0])
+displacement_values = [list(map(float, line.split())) for line in displacement_data[1:]]
+dbcnd = [int(row[0]) for row in displacement_values]
+dbcdof = [int(row[1]) for row in displacement_values]
+dbcval = [row[2] for row in displacement_values]
+
+# Read elements
+element_data = read_non_empty_lines(filenames[3]) # elements
+neles = int(element_data[0])
+element_info = [list(map(float, line.split())) for line in element_data[1:]]
+youngs_modulus, area =  element_info[3], element_info[4]
+# ele = [list(map(int, line.split())) for line in element_data[1:]]
+ele = [list(map(int, line.split()[:-2])) + list(map(float, line.split()[-2:])) for line in element_data[1:]]
+ndpn = ndim
+
+
+
 
 gconold = np.array([[node, dof, ndpn * (node - 1) + dof] for node in range(1, nodes + 1) for dof in range(1, ndpn + 1)])
 totndofs = ndpn * nodes # total dofs
@@ -211,7 +194,11 @@ for iele in range(neles):
 
 
 ## Post processing
-with open(loc + '1inputgeneratedsolution.txt', 'w') as f:
+
+# create file to write output
+write_file = loc + '_multiinputsolution.txt'
+
+with open(write_file, 'w') as f:
     # Define labels dynamically based on `ndim`
     coord_labels = ["x", "y", "z"][:ndim]  # Trim to 2D or 3D
     disp_labels = ["u", "v", "w"][:ndim]
@@ -244,3 +231,14 @@ with open(loc + '1inputgeneratedsolution.txt', 'w') as f:
         f.write(f"{i+1:4d} {strain[i]:10.6f} {Nbar[i]:10.6f} {LO[i]:10.6f}\n")
 
 print("Fext",Fext)
+
+LF = np.zeros(neles)  # Keep as NumPy array
+
+delta = np.array(u_flat).reshape(nodes, ndim)
+add = np.hstack((np.zeros((nodes, 1)), delta))  # Ensure shape (nodes, ndim+1)
+nodef = np.array(node) + add  # Ensure node is a NumPy array
+
+for i in range(neles): 
+    lfsquared = sum((nodef[int(ele[i][2]-1), j+1] - nodef[int(ele[i][1]-1), j+1])**2 for j in range(ndim))
+    LF[i] = np.sqrt(lfsquared)  # Assign instead of append
+print(LO)

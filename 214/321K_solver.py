@@ -45,7 +45,7 @@ force_values = [list(map(float, line.split())) for line in force_data[1:]]
 fnode = [int(row[0]) for row in force_values]
 fdof = [int(row[1]) for row in force_values]
 fval = [row[2] for row in force_values]
-print("dbcval",fval)
+
 # Read displacements
 displacement_data = read_non_empty_lines(filenames[2]) # displacements
 ndbcs = int(displacement_data[0])
@@ -58,8 +58,6 @@ dbcval = [row[2] for row in displacement_values]
 element_data = read_non_empty_lines(filenames[3]) # elements
 neles = int(element_data[0])
 element_info = [list(map(float, line.split())) for line in element_data[1:]]
-youngs_modulus, area =  element_info[3], element_info[4]
-# ele = [list(map(int, line.split())) for line in element_data[1:]]
 ele = [list(map(int, line.split()[:-2])) + list(map(float, line.split()[-2:])) for line in element_data[1:]]
 ndpn = ndim
 
@@ -196,7 +194,7 @@ for iele in range(neles):
 ## Post processing
 
 # create file to write output
-write_file = loc + '_multiinputsolution.txt'
+write_file = loc + 'output.txt'
 
 with open(write_file, 'w') as f:
     # Define labels dynamically based on `ndim`

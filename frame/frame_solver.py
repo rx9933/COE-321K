@@ -12,7 +12,7 @@ import os
 ### PRE PROCESSING ###
 
 
-loc = "../testingtruss/224_test2/"
+loc = "test/"
 filenames = [loc+"nodes", loc+"forces", loc+"displacements", loc+"elements"]
 for filename in filenames:
 
@@ -33,10 +33,11 @@ def read_non_empty_lines(filename):
 
 # Read nodes
 node_data = read_non_empty_lines(filenames[0]) # nodes
-ndim = int(node_data[0])
+ndim = 2#int(node_data[0])
 node = [list(map(float, line.split())) for line in node_data[1:]]
-nodes = int(node[0][0])
-node = node[1:]
+nodes = np.shape(np.array(node))[0]
+# nodes = int(node[0][0])
+# node = node[1:]
 
 # Read forces
 force_data = read_non_empty_lines(filenames[1]) # forces
@@ -58,10 +59,12 @@ dbcval = [row[2] for row in displacement_values]
 element_data = read_non_empty_lines(filenames[3]) # elements
 neles = int(element_data[0])
 element_info = [list(map(float, line.split())) for line in element_data[1:]]
-ele = [list(map(int, line.split()[:-2])) + list(map(float, line.split()[-2:])) for line in element_data[1:]]
-ndpn = ndim
-
-
+# print(element_info)
+# ele = [list(map(int, line.split()[-4:-2])) + list(map(float, line.split()[-4:-2])) for line in element_data[1:]]
+ele = np.array(element_info)[:,1:-1]
+I = np.array(element_info)[:,-1]
+# print(nodes)
+ndpn = ndim +1
 
 
 gconold = np.array([[node, dof, ndpn * (node - 1) + dof] for node in range(1, nodes + 1) for dof in range(1, ndpn + 1)])
@@ -87,13 +90,45 @@ for ndbcNum in range(ndbcs):#ndbcs):#3
 
 
 #######################################################################
+import numpy as np
+
+def compute_K_matrix(EA, EI, L, phi):
+    """
+    Compute the 6x6 stiffness matrix K[i] for a beam element.
+    
+    Parameters:
+    EA  - Axial rigidity
+    EI  - Flexural rigidity
+    L   - Element length
+    phi - Angle (in radians)
+    
+    Returns:
+    6x6 numpy array representing the stiffness matrix.
+    """
+    phi = -phi
+    cos_phi = phi[0]
+    sin_phi = phi[1]
+    print(phi)
+    # Constructing the 6x6 stiffness matrix
+    K = np.array([
+        [(EA * cos_phi**2) / L + (12 * EI * sin_phi**2) / L**3, -((12 * EI * cos_phi * sin_phi) / L**3) + (EA * cos_phi * sin_phi) / L, -((6 * EI * sin_phi) / L**2), -((EA * cos_phi**2) / L) - (12 * EI * sin_phi**2) / L**3, (12 * EI * cos_phi * sin_phi) / L**3 - (EA * cos_phi * sin_phi) / L, -((6 * EI * sin_phi) / L**2)],
+        [-((12 * EI * cos_phi * sin_phi) / L**3) + (EA * cos_phi * sin_phi) / L, (12 * EI * cos_phi**2) / L**3 + (EA * sin_phi**2) / L, (6 * EI * cos_phi) / L**2, (12 * EI * cos_phi * sin_phi) / L**3 - (EA * cos_phi * sin_phi) / L, -((12 * EI * cos_phi**2) / L**3) - (EA * sin_phi**2) / L, (6 * EI * cos_phi) / L**2],
+        [-((6 * EI * sin_phi) / L**2), (6 * EI * cos_phi) / L**2, (4 * EI) / L, (6 * EI * sin_phi) / L**2, -((6 * EI * cos_phi) / L**2), (2 * EI) / L],
+        [-((EA * cos_phi**2) / L) - (12 * EI * sin_phi**2) / L**3, (12 * EI * cos_phi * sin_phi) / L**3 - (EA * cos_phi * sin_phi) / L, (6 * EI * sin_phi) / L**2, (EA * cos_phi**2) / L + (12 * EI * sin_phi**2) / L**3, -((12 * EI * cos_phi * sin_phi) / L**3) + (EA * cos_phi * sin_phi) / L, (6 * EI * sin_phi) / L**2],
+        [(12 * EI * cos_phi * sin_phi) / L**3 - (EA * cos_phi * sin_phi) / L, -((12 * EI * cos_phi**2) / L**3) - (EA * sin_phi**2) / L, -((6 * EI * cos_phi) / L**2), -((12 * EI * cos_phi * sin_phi) / L**3) + (EA * cos_phi * sin_phi) / L, (12 * EI * cos_phi**2) / L**3 + (EA * sin_phi**2) / L, -((6 * EI * cos_phi) / L**2)],
+        [-((6 * EI * sin_phi) / L**2), (6 * EI * cos_phi) / L**2, (2 * EI) / L, (6 * EI * sin_phi) / L**2, -((6 * EI * cos_phi) / L**2), (4 * EI) / L]
+    ])
+
+    return K
+
+
 
 
 # Initialize length for bars, cosine/direction matrix
 LO = []  
 dircos = np.zeros((neles, ndim))
-Bele = np.zeros((neles, 2*ndim))
-Kele = np.zeros((neles, 2*ndim, 2*ndim))
+# Bele = np.zeros((neles, 2*ndim))
+Kele = np.zeros((neles, ndpn*ndim, ndpn*ndim))
 ndofs = totndofs - ndbcs  # Active DOFs only
 
 # Apply known forces to construct Fk
@@ -113,23 +148,26 @@ for i in range(nfbcs):
 uinit = np.zeros((nodes,ndpn))
 for i in range(ndbcs):
     uinit[dbcnd[i]-1, dbcdof[i]-1] = dbcval[i]
-
+ele =  np.column_stack((ele[:, :2].astype(int), ele[:, 2:]))
+print(ele)
 # Compute element stiffness matrix
 Kred = np.zeros((ndofs, ndofs))  
-for i in range(neles): 
-    lsquared = sum((node[ele[i][2]-1][j+1] - node[ele[i][1]-1][j+1])**2 for j in range(ndim))
+for i in range(neles):
+    lsquared = sum((node[int(ele[i][2])-1][j+1] - node[int(ele[i][1])-1][j+1])**2 for j in range(ndim))
     LO.append(np.sqrt(lsquared)) 
     
-    # Compute direction cosines
+    # # Compute direction cosines
+    print("i", i)
     for j in range(ndim):
-        diff = node[ele[i][2]-1][j+1] - node[ele[i][1]-1][j+1]
+        diff = node[int(ele[i][2])-1][j+1] - node[int(ele[i][1])-1][j+1]
         dircos[i][j] = diff / LO[i]
-        Bele[i][j] = -dircos[i][j]
-        Bele[i][j+ndim] = -Bele[i][j]
- 
-    for id in range(2*ndpn):
-        for jd in range(2*ndpn):
-            Kele[i][id,jd] += (ele[i][3] * ele[i][4] / LO[i]) * Bele[i][id]* Bele[i][jd]
+        print(ele[i])
+        print(int(ele[i][2])-1, int(ele[i][1])-1)
+        print(diff)
+    Kele[i] = compute_K_matrix(ele[i][2] * ele[i][3] , ele[i][2] * I[i], LO[i], dircos[i]) # EA, EI, L, phi
+    # print(Kele[i])
+    
+    ###########
 
 # construct global stiffness (reduced): Kred + construct final RHS: Fk - K2*uk
 row_idx, col_idx, values = [], [], []
@@ -161,6 +199,11 @@ for i in range(neles):
             value = Kele[i][l1index, l2index]
             if glist[row] < ndofs and glist[col] < ndofs:# and abs(value) > 1e-8:  # Avoid storing explicit zeros
                 Kred[glist[row],glist[col]] += value
+
+
+
+
+
 
 u_red = np.linalg.solve(Kred, Fred)
 # Append prescribed displacements

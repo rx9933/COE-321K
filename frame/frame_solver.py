@@ -12,7 +12,7 @@ import os
 ### PRE PROCESSING ###
 
 
-loc = "test/"
+loc = "hw5/"
 filenames = [loc+"nodes", loc+"forces", loc+"displacements", loc+"elements"]
 for filename in filenames:
 
@@ -59,11 +59,8 @@ dbcval = [row[2] for row in displacement_values]
 element_data = read_non_empty_lines(filenames[3]) # elements
 neles = int(element_data[0])
 element_info = [list(map(float, line.split())) for line in element_data[1:]]
-# print(element_info)
-# ele = [list(map(int, line.split()[-4:-2])) + list(map(float, line.split()[-4:-2])) for line in element_data[1:]]
-ele = np.array(element_info)[:,1:-1]
+ele = np.array(element_info)[:,:]
 I = np.array(element_info)[:,-1]
-# print(nodes)
 ndpn = ndim +1
 
 
@@ -72,7 +69,7 @@ totndofs = ndpn * nodes # total dofs
 
 gcon = gconold.copy()
 for ndbcNum in range(ndbcs):#ndbcs):#3
-    for row in range(ndim*nodes): #8
+    for row in range(ndpn*nodes): #8
         if gconold[row][0] == dbcnd[ndbcNum] and gconold[row][1] == dbcdof[ndbcNum]:
             rowIndex= row
     maxNum=gconold[rowIndex][2]
@@ -105,10 +102,8 @@ def compute_K_matrix(EA, EI, L, phi):
     Returns:
     6x6 numpy array representing the stiffness matrix.
     """
-    phi = -phi
     cos_phi = phi[0]
     sin_phi = phi[1]
-    print(phi)
     # Constructing the 6x6 stiffness matrix
     K = np.array([
         [(EA * cos_phi**2) / L + (12 * EI * sin_phi**2) / L**3, -((12 * EI * cos_phi * sin_phi) / L**3) + (EA * cos_phi * sin_phi) / L, -((6 * EI * sin_phi) / L**2), -((EA * cos_phi**2) / L) - (12 * EI * sin_phi**2) / L**3, (12 * EI * cos_phi * sin_phi) / L**3 - (EA * cos_phi * sin_phi) / L, -((6 * EI * sin_phi) / L**2)],
@@ -127,10 +122,14 @@ def compute_K_matrix(EA, EI, L, phi):
 # Initialize length for bars, cosine/direction matrix
 LO = []  
 dircos = np.zeros((neles, ndim))
-# Bele = np.zeros((neles, 2*ndim))
 Kele = np.zeros((neles, ndpn*ndim, ndpn*ndim))
 ndofs = totndofs - ndbcs  # Active DOFs only
-
+# print("ndofs", ndofs)
+# print("ndbcs", ndbcs)
+# print("nfbcs", nfbcs)
+# print("nodes", nodes)
+# print("ndpn", ndpn)
+# print("ndim", ndim)
 # Apply known forces to construct Fk
 Fred = np.zeros(ndofs)
 
@@ -149,7 +148,7 @@ uinit = np.zeros((nodes,ndpn))
 for i in range(ndbcs):
     uinit[dbcnd[i]-1, dbcdof[i]-1] = dbcval[i]
 ele =  np.column_stack((ele[:, :2].astype(int), ele[:, 2:]))
-print(ele)
+
 # Compute element stiffness matrix
 Kred = np.zeros((ndofs, ndofs))  
 for i in range(neles):
@@ -157,15 +156,11 @@ for i in range(neles):
     LO.append(np.sqrt(lsquared)) 
     
     # # Compute direction cosines
-    print("i", i)
+
     for j in range(ndim):
         diff = node[int(ele[i][2])-1][j+1] - node[int(ele[i][1])-1][j+1]
         dircos[i][j] = diff / LO[i]
-        print(ele[i])
-        print(int(ele[i][2])-1, int(ele[i][1])-1)
-        print(diff)
-    Kele[i] = compute_K_matrix(ele[i][2] * ele[i][3] , ele[i][2] * I[i], LO[i], dircos[i]) # EA, EI, L, phi
-    # print(Kele[i])
+    Kele[i] = compute_K_matrix(ele[i][3] * ele[i][4] , ele[i][3] * I[i], LO[i], dircos[i]) # EA, EI, L, phi
     
     ###########
 
@@ -173,19 +168,18 @@ for i in range(neles):
 row_idx, col_idx, values = [], [], []
 for i in range(neles):  
     node1, node2 = ele[i][1], ele[i][2]
-    glist = [0] * (2 * ndim)  # Stores global DOF indices for this element
+    glist = [0] * (ndpn * ndim)  # Stores global DOF indices for this element
 
-    for row in range(ndim * nodes):
+    for row in range(ndpn * nodes):
         if gcon[row][0] in {node1, node2}:
-            for dim in range(1, ndim + 1):
+            for dim in range(1, ndpn + 1):
                 if gcon[row][0] == node1 and gcon[row][1] == dim:
                     glist[dim - 1] = gcon[row][2] - 1
                 elif gcon[row][0] == node2 and gcon[row][1] == dim:
-                    glist[ndim + dim - 1] = gcon[row][2] - 1
-
-    for row in range(2 * ndim):
+                    glist[ndpn + dim - 1] = gcon[row][2] - 1
+    for row in range(ndpn * ndim):
         if glist[row] < ndofs:  # Only for unknown DOFs
-            for col in range(2 * ndim):
+            for col in range(ndpn * ndim):
                 if glist[col] >= ndofs:  # Only for known DOFs
                     Fred[glist[row]] -= Kele[i][row, col] * dbcval[glist[col] - ndofs]
     
@@ -197,7 +191,7 @@ for i in range(neles):
             l1index = row
             l2index = col
             value = Kele[i][l1index, l2index]
-            if glist[row] < ndofs and glist[col] < ndofs:# and abs(value) > 1e-8:  # Avoid storing explicit zeros
+            if glist[row]  < ndofs and glist[col] < ndofs:# and abs(value) > 1e-8:  # Avoid storing explicit zeros
                 Kred[glist[row],glist[col]] += value
 
 
@@ -209,78 +203,67 @@ u_red = np.linalg.solve(Kred, Fred)
 # Append prescribed displacements
 u = np.concatenate([u_red, dbcval])
 
-u_flat = [0]*ndim*nodes
-for i in range(ndim*nodes):
+u_flat = [0]*ndpn*nodes
+for i in range(ndpn*nodes):
     uflatindex =gcon[i,2]-1
     u_flat[i] = u[uflatindex]
 
+u_2d = np.array(u_flat).reshape((int(len(u_flat)/ndpn), ndpn))
+
 # Calculate internal forces Nbar using Bele and local displacements (u_local)
-Nbar = np.zeros(neles)  
-strain = np.zeros(neles) 
+Nbar, V, M1, M2 = np.zeros(neles), np.zeros(neles), np.zeros(neles), np.zeros(neles)  
+
 for i in range(neles):
-    node1, node2 = ele[i][1], ele[i][2]
-    u_local = np.zeros(2 * ndim) 
-    for j in range(ndim): 
-        u_local[j] = u_flat[ndpn * (node1 - 1) + j]  
-        u_local[ndim + j] = u_flat[ndpn * (node2 - 1) + j]  
-    strain[i] =  np.dot(Bele[i], u_local)/LO[i]
-    Nbar[i] = ele[i][3] * ele[i][4] * strain[i] # EA/L * Bele^T * u_local
+
+    node1ind, node2ind = int(ele[i][1]-1), int(ele[i][2]-1)
+    theta1 = u_2d[node1ind][-1].item()
+    theta2 = u_2d[node2ind][-1].item()
+    u1v1 = u_2d[node1ind][:2]
+    u2v2 = u_2d[node2ind][:2]
+    u1a = np.dot(u1v1,dircos[i])
+    u1t = np.dot(np.array((-u1v1[0], u1v1[1])),dircos[i][::-1])
+
+    u2a = np.dot(u2v2,dircos[i])
+    u2t = np.dot(np.array((-u2v2[0], u2v2 [1])),dircos[i][::-1])
+    
+    Nbar[i] = ele[i][3] * ele[i][4] * (u2a-u1a)
+    V[i]  = 12 * ele[i][3] * ele[i][5] / LO[i]**3 * (u1t - u2t) + 6 * ele[i][3] * ele[i][5] / LO[i]**2 * (theta1 + theta2)
+    M1[i] = 6 * ele[i][3] * ele[i][5] / LO[i]**2 * (u2t - u1t) - 2 * ele[i][3] * ele[i][5] / LO[i] * (2* theta1 + theta2)
+    M2[i] = -6 * ele[i][3] * ele[i][5] / LO[i]**2 * (u2t - u1t) + 2 * ele[i][3] * ele[i][5] / LO[i] * (theta1 + 2*theta2)
+
 
 ele = np.array(ele)
 Fext = np.zeros((nodes, ndpn))
-for iele in range(neles):
-    for localnode in range(2):
-        for localdof in range(ndpn):
-            globalnode=int(ele[iele, localnode+1])
-            Fext[globalnode-1, localdof] += Nbar[iele] * Bele[iele, ndpn*(localnode)+localdof]
+for i in range(neles):
+    node1ind, node2ind = int(ele[i][1]-1), int(ele[i][2]-1)
+    Fext[node1ind, 0] += np.dot([Nbar[i], V[i]], -dircos[i])
+    Fext[node2ind, 0] += np.dot([Nbar[i], V[i]], dircos[i])
 
+    Fext[node1ind, 1] += np.dot([Nbar[i], V[i]], np.array([-dircos[i][1], dircos[i][0]]))
+    Fext[node2ind, 1] += np.dot([Nbar[i], V[i]], np.array([dircos[i][1], -dircos[i][0]]))
+    
+    Fext[node1ind, 2] += -M1[i]
+    Fext[node2ind, 2] += M2[i]
 
+###################
 ## Post processing
-
-# create file to write output
 write_file = loc + 'output.txt'
 
 with open(write_file, 'w') as f:
-    # Define labels dynamically based on `ndim`
-    coord_labels = ["x", "y", "z"][:ndim]  # Trim to 2D or 3D
-    disp_labels = ["u", "v", "w"][:ndim]
-    force_labels = ["fx", "fy", "fz"][:ndim]
-
-    # Write headers
+    # Writing nodal displacements
     f.write("Nodal displacements\n")
-    f.write(f"node#  {'  '.join(coord_labels)}  {'  '.join(disp_labels)}\n")
-    
-    # Write nodal displacements
-    for i in range(nodes):
-        f.write(f"{i+1:4d} " + 
-                " ".join(f"{node[i][j+1]:10.6f}" for j in range(ndim)) + " " + 
-                " ".join(f"{u_flat[ndim*i + j]:10.6f}" for j in range(ndim)) + "\n")
+    f.write("node#      x          y          u          v       theta\n")
+    for i in range((u_2d.shape)[0]):
+        f.write(f"{i+1:5d}  {node[i][1]:10.6f}  {node[i][2]:10.6f}  {u_2d[i,0]:10.6f}  {u_2d[i,1]:10.6f}  {u_2d[i,2]:10.6f}\n")
 
     f.write("\nExternal forces\n")
-    f.write(f"node#  {'  '.join(coord_labels)}  {'  '.join(force_labels)}\n")
+    f.write("node#      x          y         Fx         Fy          M\n")
+    for i in range(len(Fext)):
+        f.write(f"{i+1:5d}  {node[i][1]:10.6f}  {node[i][2]:10.6f}  {Fext[i,0]:10.6f}  {Fext[i,1]:10.6f}  {Fext[i,2]:10.6f}\n")
 
-    # Write external forces
-    for i in range(nodes):
-        f.write(f"{i+1:4d} " + 
-                " ".join(f"{node[i][j+1]:10.6f}" for j in range(ndim)) + " " + 
-                " ".join(f"{Fext[i][j]:10.6f}" for j in range(ndim)) + "\n")
+    f.write("\nElement forces and moments\n")
+    f.write("ele#       N          V         M1         M2\n")
+    for i in range(len(Nbar)):
+        f.write(f"{i+1:5d}  {Nbar[i]:10.6f}  {V[i]:10.6f}  {M1[i]:10.6f}  {M2[i]:10.6f}\n")
 
-    f.write("\nElement axial strains and forces\n")
-    f.write("ele#      strain       force        L\n")
-
-    # Write element strains and forces
-    for i in range(neles):
-        f.write(f"{i+1:4d} {strain[i]:10.6f} {Nbar[i]:10.6f} {LO[i]:10.6f}\n")
-
-print("Fext",Fext)
-
-LF = np.zeros(neles)  # Keep as NumPy array
-
-delta = np.array(u_flat).reshape(nodes, ndim)
-add = np.hstack((np.zeros((nodes, 1)), delta))  # Ensure shape (nodes, ndim+1)
-nodef = np.array(node) + add  # Ensure node is a NumPy array
-
-for i in range(neles): 
-    lfsquared = sum((nodef[int(ele[i][2]-1), j+1] - nodef[int(ele[i][1]-1), j+1])**2 for j in range(ndim))
-    LF[i] = np.sqrt(lfsquared)  # Assign instead of append
-# print(LO)
+print(f"Results written to {write_file}")

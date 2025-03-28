@@ -1,5 +1,5 @@
 # 10/31
-## all 1 input
+## 4 input files
 import numpy as np
 from math import sqrt
 from scipy.sparse import coo_matrix

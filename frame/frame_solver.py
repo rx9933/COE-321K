@@ -12,7 +12,7 @@ import os
 ### PRE PROCESSING ###
 
 
-loc = "hw5/"
+loc = ""
 filenames = [loc+"nodes", loc+"forces", loc+"displacements", loc+"elements"]
 for filename in filenames:
 
@@ -67,12 +67,16 @@ ndpn = ndim +1
 gconold = np.array([[node, dof, ndpn * (node - 1) + dof] for node in range(1, nodes + 1) for dof in range(1, ndpn + 1)])
 totndofs = ndpn * nodes # total dofs
 
+print(dbcnd)
+print(dbcdof)
 gcon = gconold.copy()
 for ndbcNum in range(ndbcs):#ndbcs):#3
     for row in range(ndpn*nodes): #8
         if gconold[row][0] == dbcnd[ndbcNum] and gconold[row][1] == dbcdof[ndbcNum]:
             rowIndex= row
+            print("rI",rowIndex, dbcnd[ndbcNum], dbcdof[ndbcNum])
     maxNum=gconold[rowIndex][2]
+    print("mnum",maxNum)
     for gIndex in range(len(gconold)):
         if gconold[gIndex][2] < maxNum:
             gcon[gIndex][2] = gconold[gIndex][2]
@@ -81,6 +85,8 @@ for ndbcNum in range(ndbcs):#ndbcs):#3
         else:
             gcon[gIndex][2] = gconold[gIndex][2]-1
     gconold = gcon
+    print(gcon)
+   
     gcon = gconold.copy()
 
 
@@ -113,7 +119,7 @@ def compute_K_matrix(EA, EI, L, phi):
         [(12 * EI * cos_phi * sin_phi) / L**3 - (EA * cos_phi * sin_phi) / L, -((12 * EI * cos_phi**2) / L**3) - (EA * sin_phi**2) / L, -((6 * EI * cos_phi) / L**2), -((12 * EI * cos_phi * sin_phi) / L**3) + (EA * cos_phi * sin_phi) / L, (12 * EI * cos_phi**2) / L**3 + (EA * sin_phi**2) / L, -((6 * EI * cos_phi) / L**2)],
         [-((6 * EI * sin_phi) / L**2), (6 * EI * cos_phi) / L**2, (2 * EI) / L, (6 * EI * sin_phi) / L**2, -((6 * EI * cos_phi) / L**2), (4 * EI) / L]
     ])
-
+    assert (K.T == K).all
     return K
 
 
@@ -124,12 +130,12 @@ LO = []
 dircos = np.zeros((neles, ndim))
 Kele = np.zeros((neles, ndpn*ndim, ndpn*ndim))
 ndofs = totndofs - ndbcs  # Active DOFs only
-# print("ndofs", ndofs)
-# print("ndbcs", ndbcs)
-# print("nfbcs", nfbcs)
-# print("nodes", nodes)
-# print("ndpn", ndpn)
-# print("ndim", ndim)
+print("ndofs", ndofs)
+print("ndbcs", ndbcs)
+print("nfbcs", nfbcs)
+print("nodes", nodes)
+print("ndpn", ndpn)
+print("ndim", ndim)
 # Apply known forces to construct Fk
 Fred = np.zeros(ndofs)
 
@@ -161,7 +167,7 @@ for i in range(neles):
         diff = node[int(ele[i][2])-1][j+1] - node[int(ele[i][1])-1][j+1]
         dircos[i][j] = diff / LO[i]
     Kele[i] = compute_K_matrix(ele[i][3] * ele[i][4] , ele[i][3] * I[i], LO[i], dircos[i]) # EA, EI, L, phi
-    
+
     ###########
 
 # construct global stiffness (reduced): Kred + construct final RHS: Fk - K2*uk
@@ -177,6 +183,7 @@ for i in range(neles):
                     glist[dim - 1] = gcon[row][2] - 1
                 elif gcon[row][0] == node2 and gcon[row][1] == dim:
                     glist[ndpn + dim - 1] = gcon[row][2] - 1
+                    
     for row in range(ndpn * ndim):
         if glist[row] < ndofs:  # Only for unknown DOFs
             for col in range(ndpn * ndim):
@@ -198,6 +205,7 @@ for i in range(neles):
 
 
 
+print(Fred)
 
 u_red = np.linalg.solve(Kred, Fred)
 # Append prescribed displacements
@@ -216,6 +224,7 @@ Nbar, V, M1, M2 = np.zeros(neles), np.zeros(neles), np.zeros(neles), np.zeros(ne
 for i in range(neles):
 
     node1ind, node2ind = int(ele[i][1]-1), int(ele[i][2]-1)
+    print("node",node1ind, node2ind)
     theta1 = u_2d[node1ind][-1].item()
     theta2 = u_2d[node2ind][-1].item()
     u1v1 = u_2d[node1ind][:2]
@@ -226,10 +235,10 @@ for i in range(neles):
     u2a = np.dot(u2v2,dircos[i])
     u2t = np.dot(np.array((-u2v2[0], u2v2 [1])),dircos[i][::-1])
     
-    Nbar[i] = ele[i][3] * ele[i][4] * (u2a-u1a)
+    Nbar[i] = ele[i][3] * ele[i][4] * (u2a-u1a) * 1/LO[i]
     V[i]  = 12 * ele[i][3] * ele[i][5] / LO[i]**3 * (u1t - u2t) + 6 * ele[i][3] * ele[i][5] / LO[i]**2 * (theta1 + theta2)
     M1[i] = 6 * ele[i][3] * ele[i][5] / LO[i]**2 * (u2t - u1t) - 2 * ele[i][3] * ele[i][5] / LO[i] * (2* theta1 + theta2)
-    M2[i] = -6 * ele[i][3] * ele[i][5] / LO[i]**2 * (u2t - u1t) + 2 * ele[i][3] * ele[i][5] / LO[i] * (theta1 + 2*theta2)
+    M2[i] = 6 * ele[i][3] * ele[i][5] / LO[i]**2 * (u1t - u2t) + 2 * ele[i][3] * ele[i][5] / LO[i] * (theta1 + 2*theta2)
 
 
 ele = np.array(ele)
@@ -267,3 +276,4 @@ with open(write_file, 'w') as f:
         f.write(f"{i+1:5d}  {Nbar[i]:10.6f}  {V[i]:10.6f}  {M1[i]:10.6f}  {M2[i]:10.6f}\n")
 
 print(f"Results written to {write_file}")
+

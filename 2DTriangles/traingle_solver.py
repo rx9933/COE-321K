@@ -1,26 +1,10 @@
-
 import numpy as np
 import os
-
-
-
-
+from scipy.sparse import lil_matrix, csr_matrix
 ### PRE PROCESSING ###
-
- 
-loc = "testcase/"
-filenames = [loc+"nodes", loc+"forces", loc+"displacements", loc+"elements"]
-for filename in filenames:
-
-    # Check if the file exists without an extension
-    if os.path.exists(filename) and not os.path.exists(filename + ".txt"):
-        os.rename(filename, filename + ".txt")
-        print(f'Renamed "{filename}" to "nodes.txt"')
-    else:
-        print(f'"{filename}" does not exist or "nodes.txt" already exists.')
-
-
-filenames = [loc+"nodes.txt", loc+"forces.txt", loc+"displacements.txt", loc+"elements.txt"]
+loc = "report/inputR/"
+add_on = "R"
+filenames = [loc+"nodes" + add_on + ".txt", loc + "forces" + add_on + ".txt", loc+"displacements"+ add_on+".txt", loc+"elements"+add_on+".txt"]
 
 # Function to read non-empty lines from a file
 def read_non_empty_lines(filename):
@@ -28,244 +12,196 @@ def read_non_empty_lines(filename):
         return [line.strip() for line in f if line.strip()]
 
 # Read nodes
-node_data = read_non_empty_lines(filenames[0]) # nodes
-ndim = 2#int(node_data[0])
+node_data = read_non_empty_lines(filenames[0])
 node = [list(map(float, line.split())) for line in node_data[1:]]
-nodes = np.shape(np.array(node))[0]
-# nodes = int(node[0][0])
-# node = node[1:]
+nodes = len(node)
+ndim = 2  # 2D problem
 
 # Read forces
-force_data = read_non_empty_lines(filenames[1]) # forces
+force_data = read_non_empty_lines(filenames[1])
 nfbcs = int(force_data[0])
 force_values = [list(map(float, line.split())) for line in force_data[1:]]
 fnode = [int(row[0]) for row in force_values]
-fdof = [int(row[1]) for row in force_values]
+fdof = [int(row[1]) for row in force_values]  # 1=x, 2=y
 fval = [row[2] for row in force_values]
 
 # Read displacements
-displacement_data = read_non_empty_lines(filenames[2]) # displacements
-ndbcs = int(displacement_data[0])
-displacement_values = [list(map(float, line.split())) for line in displacement_data[1:]]
-dbcnd = [int(row[0]) for row in displacement_values]
-dbcdof = [int(row[1]) for row in displacement_values] 
-dbcval = [row[2] for row in displacement_values]
+disp_data = read_non_empty_lines(filenames[2])
+ndbcs = int(disp_data[0])
+disp_values = [list(map(float, line.split())) for line in disp_data[1:]]
+dbcnd = [int(row[0]) for row in disp_values]
+dbcdof = [int(row[1]) for row in disp_values]  # 1=x, 2=y
+dbcval = [row[2] for row in disp_values]
 
 # Read elements
-element_data = read_non_empty_lines(filenames[3]) # elements
-firstrow = element_data[0].split(" ")[::2]
+elem_data = read_non_empty_lines(filenames[3])
+firstrow = elem_data[0].split()
 neles = int(firstrow[0])
 E = float(firstrow[1])
 v = float(firstrow[2])
-element_info = [list(map(float, line.split())) for line in element_data[1:]]
-ele = np.array(element_info)[:,:]
-ndpn = ndim +1
+element_info = [list(map(float, line.split())) for line in elem_data[1:]]
+ele = np.array(element_info)
 
+### MATERIAL PROPERTIES ###
+C = np.array([
+    [E/(1-v**2), v*E/(1-v**2), 0],
+    [v*E/(1-v**2), E/(1-v**2), 0],
+    [0, 0, E/(2*(1+v))]
+])
+totdofs = 2 * nodes
 
-gconold = np.array([[node, dof, ndpn * (node - 1) + dof] for node in range(1, nodes + 1) for dof in range(1, ndpn + 1)])
-totndofs = ndpn * nodes # total dofs
+# Create fixed DOFs list properly
+fixed_dofs = []
+for n, d in zip(dbcnd, dbcdof):
+    fixed_dofs.append(2*(n-1) + (d-1))  # Convert to 0-based indexing
 
-gcon = gconold.copy()
-for ndbcNum in range(ndbcs):#ndbcs):#3
-    for row in range(ndpn*nodes): #8
-        if gconold[row][0] == dbcnd[ndbcNum] and gconold[row][1] == dbcdof[ndbcNum]:
-            rowIndex= row
-    maxNum=gconold[rowIndex][2]
-    for gIndex in range(len(gconold)):
-        if gconold[gIndex][2] < maxNum:
-            gcon[gIndex][2] = gconold[gIndex][2]
-        elif gconold[gIndex][2] == maxNum:
-            gcon[gIndex][2] = len(gconold)
-        else:
-            gcon[gIndex][2] = gconold[gIndex][2]-1
-    gconold = gcon 
-    gcon = gconold.copy()
+# Create free DOFs list
+free_dofs = [i for i in range(totdofs) if i not in fixed_dofs]
+ndofs = len(free_dofs)
 
+# Create mapping from global DOF to reduced DOF
+dof_map = {dof:i for i, dof in enumerate(free_dofs)}
 
-
-
-#######################################################################
-
-C = np.array([[E/(1-v**2), v*E /(1-v**2), 0],[v*E /(1-v**2), E /(1-v**2), 0], [0, 0, E/(2*(1+v))]])
-
-
+### ELEMENT STIFFNESS MATRIX ###
 def compute_K_matrix(elenum):
-    """
-    Compute the 6x6 stiffness matrix K[i] for a beam element.
+    nodes = ele[elenum, 1:4].astype(int)
+    x1, y1 = node[nodes[0]-1][1:]
+    x2, y2 = node[nodes[1]-1][1:]
+    x3, y3 = node[nodes[2]-1][1:]
     
-    Parameters:
-    EA  - Axial rigidity
-    EI  - Flexural rigidity
-    L   - Element length
-    phi - Angle (in radians)
+    # Element area
+    A = 0.5 * ((x2-x1)*(y3-y1) - (x3-x1)*(y2-y1))
     
-    Returns:
-    6x6 numpy array representing the stiffness matrix.
+    # Shape function derivatives
+    N1x = (y2-y3)/(2*A)
+    N1y = (x3-x2)/(2*A)
+    N2x = (y3-y1)/(2*A)
+    N2y = (x1-x3)/(2*A)
+    N3x = (y1-y2)/(2*A)
+    N3y = (x2-x1)/(2*A)
     
-    """
-    print("element",ele[elenum])
-    element_nodes = ele[elenum][1:]
-    print("nodes", node)
-    x1,y1 = node[int(element_nodes[0]-1)][1:]
-    x2,y2 = node[int(element_nodes[1]-1)][1:]
-    x3,y3 = node[int(element_nodes[2]-1)][1:]
-    print("all nodes", x1, y1, x2, y2, x3, y3)
-    A = 1/2 * np.linalg.det(np.array([[x2-x1, y2-y1, 0], [x3-x1, y3-y1, 0], [0, 0, 1]]))
-    N1x = 1/(2*A) * (y2-y3)
-    N1y = 1/(2*A) * (x3-x2)
+    # B matrix
+    B = np.array([
+        [N1x, 0, N2x, 0, N3x, 0],
+        [0, N1y, 0, N2y, 0, N3y],
+        [N1y, N1x, N2y, N2x, N3y, N3x]
+    ])
+    
+    # Element stiffness matrix
+    return A * B.T @ C @ B
 
-    N2x = 1/(2*A) * (y3-y1)
-    N2y = 1/(2*A) * (x1-x3)
-
-    N3x = 1/(2*A) * (y1-y2)
-    N3y = 1/(2*A) * (x2-x1)
-    B = np.array([[N1x, 0, N2x, 0, N3x, 0], [0, N1y, 0, N2y, 0, N3y], [N1y, N1x, N2y, N2x, N3y, N3x]])
-    # Constructing the 6x6 stiffness matrix
-    print(A)
-    K = A * B.T @ C @ B
-    print(C)
-    # print( K)
-    # K =np.ones((ndpn, 2*ndpn))
-    assert (K.T == K).all
-    return K
+### ASSEMBLY ###
+# Initialize sparse matrix for reduced system
+K_red = lil_matrix((ndofs, ndofs))
+F_red = np.zeros(ndofs)
 
 
+# Get fixed displacement values in a dictionary for quick lookup
+fixed_disp = {dof:dbcval[i] for i, dof in enumerate(fixed_dofs)}
 
 
-# Initialize length for bars, cosine/direction matrix
-LO = []  
-dircos = np.zeros((neles, ndim))
-Kele = np.zeros((neles, ndpn*ndim, ndpn*ndim))
-ndofs = totndofs - ndbcs  # Active DOFs only
-print("ndofs", ndofs)
-print("ndbcs", ndbcs)
-print("nfbcs", nfbcs)
-print("nodes", nodes)
-print("ndpn", ndpn)
-print("ndim", ndim)
-# Apply known forces to construct Fk
-Fred = np.zeros(ndofs)
+# Assemble directly into reduced system
+for i in range(neles):
+    nodes = ele[i, 1:4].astype(int)
+    Ke = compute_K_matrix(i)
+    
+    # Get global DOF indices for this element [u1,v1, u2,v2, u3,v3]
+    dofs = []
+    for n in nodes:
+        dofs.append(2*(n-1))    # u DOF
+        dofs.append(2*(n-1)+1)  # v DOF
+    
+    # Process each DOF pair
+    for i_local in range(6):
+        i_global = dofs[i_local]
+         
+        # If this DOF is free, add to reduced system
+        if i_global in dof_map:
+            row = dof_map[i_global]
+            
+            # Add to force vector (including effect of fixed DOFs)
+            for j_local in range(6):
+                j_global = dofs[j_local]
+                if j_global in fixed_disp:
+                    F_red[row] -= Ke[i_local, j_local] * fixed_disp[j_global]
+                elif j_global in dof_map:
+                    col = dof_map[j_global]
+                    K_red[row, col] += Ke[i_local, j_local]
 
+# Now add external forces directly to reduced system
 for i in range(nfbcs):
-    r = np.argwhere(gcon[:,0] == fnode[i])
-    c = np.argwhere(gcon[:,1] == fdof[i])
-    for r1 in r:
-        if r1 in c:
-            row = r1
-            break
-    dof = gcon[row,2] -1 # select 3rd col
-    Fred[dof] +=fval[i]
+    dof = 2*(fnode[i]-1) + (fdof[i]-1)
+    if dof in dof_map:  # Only add if DOF is free
+        F_red[dof_map[dof]] += fval[i]
 
-# Apply known forces to construct uk (need to subtract out of Fk)
-uinit = np.zeros((nodes,ndpn))
-for i in range(ndbcs):
-    uinit[dbcnd[i]-1, dbcdof[i]-1] = dbcval[i]
-ele =  np.column_stack((ele[:, :2].astype(int), ele[:, 2:]))
 
-# Compute element stiffness matrix
-Kred = np.zeros((ndofs, ndofs))  
+### SOLVE ###
+try:
+    # Convert to CSR format for efficient solving
+    K_red_csr = K_red.tocsr()
+    u_red = np.linalg.solve(K_red_csr.toarray(), F_red)
+except np.linalg.LinAlgError as e:
+    print("Error solving system:", e)
+    print("Matrix rank:", np.linalg.matrix_rank(K_red_csr.toarray()))
+    print("Matrix condition number:", np.linalg.cond(K_red_csr.toarray()))
+    raise
+
+# Combine solutions
+u_full = np.zeros(totdofs)
+for dof, idx in dof_map.items():
+    u_full[dof] = u_red[idx]
+for dof, val in fixed_disp.items():
+    u_full[dof] = val
+
+print(u_full)
+
+### POST-PROCESSING ###
+# Nodal displacements
+u_2d = np.zeros((len(node), 2))
+for n in range(len(node)):
+    u_2d[n, 0] = u_full[2*n]    # u displacement
+    u_2d[n, 1] = u_full[2*n+1]  # v displacement
+
+# Element stresses
+element_stresses = []
 for i in range(neles):
-    Kele[i] = compute_K_matrix(i) # EA, EI, L, phi
-
-    ###########
-
-# construct global stiffness (reduced): Kred + construct final RHS: Fk - K2*uk
-row_idx, col_idx, values = [], [], []
-for i in range(neles):  
-    node1, node2 = ele[i][1], ele[i][2]
-    glist = [0] * (ndpn * ndim)  # Stores global DOF indices for this element
-
-    for row in range(ndpn * nodes):
-        if gcon[row][0] in {node1, node2}:
-            for dim in range(1, ndpn + 1):
-                if gcon[row][0] == node1 and gcon[row][1] == dim:
-                    glist[dim - 1] = gcon[row][2] - 1
-                elif gcon[row][0] == node2 and gcon[row][1] == dim:
-                    glist[ndpn + dim - 1] = gcon[row][2] - 1
-                    
-    for row in range(ndpn * ndim):
-        if glist[row] < ndofs:  # Only for unknown DOFs
-            for col in range(ndpn * ndim):
-                if glist[col] >= ndofs:  # Only for known DOFs
-                    Fred[glist[row]] -= Kele[i][row, col] * dbcval[glist[col] - ndofs]
+    nodes = ele[i, 1:4].astype(int)
+    x1,y1 = node[nodes[0]-1][1:]
+    x2,y2 = node[nodes[1]-1][1:]
+    x3,y3 = node[nodes[2]-1][1:]
+    A = 0.5 * ((x2-x1)*(y3-y1) - (x3-x1)*(y2-y1))
     
-
-    glist = np.atleast_1d(glist) 
-
-    for row in range(len(glist)):
-        for col in range(len(glist)):
-            l1index = row
-            l2index = col
-            value = Kele[i][l1index, l2index]
-            if glist[row]  < ndofs and glist[col] < ndofs:# and abs(value) > 1e-8:  # Avoid storing explicit zeros
-                Kred[glist[row],glist[col]] += value
-
-u_red = np.linalg.solve(Kred, Fred)
-# Append prescribed displacements
-u = np.concatenate([u_red, dbcval])
-
-u_flat = [0]*ndpn*nodes
-for i in range(ndpn*nodes):
-    uflatindex =gcon[i,2]-1
-    u_flat[i] = u[uflatindex]
-
-u_2d = np.array(u_flat).reshape((int(len(u_flat)/ndpn), ndpn))
-
-# Calculate internal forces Nbar using Bele and local displacements (u_local)
-Nbar, V, M1, M2 = np.zeros(neles), np.zeros(neles), np.zeros(neles), np.zeros(neles)  
-
-for i in range(neles):
-
-    node1ind, node2ind = int(ele[i][1]-1), int(ele[i][2]-1)
-    theta1 = u_2d[node1ind][-1].item()
-    theta2 = u_2d[node2ind][-1].item()
-    u1v1 = u_2d[node1ind][:2]
-    u2v2 = u_2d[node2ind][:2]
-    u1a = np.dot(u1v1,dircos[i])
-    u1t = np.dot(np.array((-u1v1[0], u1v1[1])),dircos[i][::-1])
-
-    u2a = np.dot(u2v2,dircos[i])
-    u2t = np.dot(np.array((-u2v2[0], u2v2 [1])),dircos[i][::-1])
+    # B matrix
+    N1x = (y2-y3)/(2*A)
+    N1y = (x3-x2)/(2*A)
+    N2x = (y3-y1)/(2*A)
+    N2y = (x1-x3)/(2*A)
+    N3x = (y1-y2)/(2*A)
+    N3y = (x2-x1)/(2*A)
+    B = np.array([
+        [N1x, 0, N2x, 0, N3x, 0],
+        [0, N1y, 0, N2y, 0, N3y],
+        [N1y, N1x, N2y, N2x, N3y, N3x]
+    ])
     
-    Nbar[i] = ele[i][3] * ele[i][4] * (u2a-u1a) * 1/LO[i]
-    V[i]  = 12 * ele[i][3] * ele[i][5] / LO[i]**3 * (u1t - u2t) + 6 * ele[i][3] * ele[i][5] / LO[i]**2 * (theta1 + theta2)
-    M1[i] = 6 * ele[i][3] * ele[i][5] / LO[i]**2 * (u2t - u1t) - 2 * ele[i][3] * ele[i][5] / LO[i] * (2* theta1 + theta2)
-    M2[i] = 6 * ele[i][3] * ele[i][5] / LO[i]**2 * (u1t - u2t) + 2 * ele[i][3] * ele[i][5] / LO[i] * (theta1 + 2*theta2)
-
-
-ele = np.array(ele)
-Fext = np.zeros((nodes, ndpn))
-for i in range(neles):
-    node1ind, node2ind = int(ele[i][1]-1), int(ele[i][2]-1)
-    Fext[node1ind, 0] += np.dot([Nbar[i], V[i]], -dircos[i])
-    Fext[node2ind, 0] += np.dot([Nbar[i], V[i]], dircos[i])
-
-    Fext[node1ind, 1] += np.dot([Nbar[i], V[i]], np.array([-dircos[i][1], dircos[i][0]]))
-    Fext[node2ind, 1] += np.dot([Nbar[i], V[i]], np.array([dircos[i][1], -dircos[i][0]]))
+    # Element displacements [u1,v1, u2,v2, u3,v3]
+    u_elem = np.concatenate([u_2d[n-1] for n in nodes])
     
-    Fext[node1ind, 2] += -M1[i]
-    Fext[node2ind, 2] += M2[i]
+    # Stress = C * B * u
+    stress = C @ B @ u_elem
+    element_stresses.append(stress)
 
-###################
-## Post processing
+# Write output
 write_file = loc + 'output.txt'
-
 with open(write_file, 'w') as f:
-    # Writing nodal displacements
     f.write("Nodal displacements\n")
-    f.write("node#      x          y          u          v       theta\n")
-    for i in range((u_2d.shape)[0]):
-        f.write(f"{i+1:5d}  {node[i][1]:10.6f}  {node[i][2]:10.6f}  {u_2d[i,0]:10.6f}  {u_2d[i,1]:10.6f}  {u_2d[i,2]:10.6f}\n")
-
-    f.write("\nExternal forces\n")
-    f.write("node#      x          y         Fx         Fy          M\n")
-    for i in range(len(Fext)):
-        f.write(f"{i+1:5d}  {node[i][1]:10.6f}  {node[i][2]:10.6f}  {Fext[i,0]:10.6f}  {Fext[i,1]:10.6f}  {Fext[i,2]:10.6f}\n")
-
-    f.write("\nElement forces and moments\n")
-    f.write("ele#       N          V         M1         M2\n")
-    for i in range(len(Nbar)):
-        f.write(f"{i+1:5d}  {Nbar[i]:10.6f}  {V[i]:10.6f}  {M1[i]:10.6f}  {M2[i]:10.6f}\n")
+    f.write("node#      x          y          u          v\n")
+    for i in range(len(node)):
+        f.write(f"{i+1:5d}  {node[i][1]:10.6f}  {node[i][2]:10.6f}  {u_2d[i,0]:10.6f}  {u_2d[i,1]:10.6f}\n")
+    
+    f.write("\nElement stresses\n")
+    f.write("ele#       σxx        σyy        τxy\n")
+    for i in range(neles):
+        f.write(f"{i+1:5d}  {element_stresses[i][0]:10.6f}  {element_stresses[i][1]:10.6f}  {element_stresses[i][2]:10.6f}\n")
 
 print(f"Results written to {write_file}")
-

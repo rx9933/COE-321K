@@ -7,7 +7,7 @@ plt.rcParams['font.serif'] = ['Nimbus Roman', 'Times New Roman', 'Times', 'Palat
 plt.rcParams['text.usetex'] = True  # Enable LaTeX for all text rendering
 
 # Set the file name and location path
-name = "R"
+name = "6"
 loc = "report/input" + name + "/"
 
 # Load nodes
@@ -91,6 +91,5 @@ axes[1].set_xlabel(r"$\frac{x}{R}$", fontsize=18)
 axes[1].set_ylabel(r"$\frac{y}{R}$", fontsize=18)
 
 plt.tight_layout()
-plt.show()
-
 plt.savefig(loc+"mesh")
+plt.show()
